@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Speeltuinen in Flevoland</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
+<style>
+  html, body { height: 100%; margin: 0; font-family: system-ui, sans-serif; }
+  #map { height: 100%; }
+  .info {
+    background: #fff; padding: 8px 12px; border-radius: 6px;
+    box-shadow: 0 1px 5px rgba(0,0,0,.4); font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+<script>
+  // 1. Basiskaart
+  const map = L.map('map').setView([52.5, 5.45], 9);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-bijdragers'
+  }).addTo(map);
+
+  // 2. Teller-control
+  const info = L.control({ position: 'topright' });
+  info.onAdd = function () {
+    this._div = L.DomUtil.create('div', 'info');
+    this._div.textContent = 'Speeltuinen laden…';
+    return this._div;
+  };
+  info.addTo(map);
+
+  // 3. Overpass-query: alle leisure=playground binnen de provincie Flevoland
+  const query = `
+    [out:json][timeout:90];
+    area["ISO3166-2"="NL-FL"]->.fl;
+    nwr["leisure"="playground"](area.fl);
+    out center tags;
+  `;
+
+  // Optie A (live): rechtstreeks uit Overpass.
+  // Optie B (statisch): vervang dit door fetch('data/speeltuinen.geojson').
+  fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST',
+    body: 'data=' + encodeURIComponent(query)
+  })
+    .then(r => r.json())
+    .then(data => {
+      const cluster = L.markerClusterGroup({ maxClusterRadius: 50 });
+
+      data.elements.forEach(el => {
+        // nodes hebben lat/lon, ways/relations hebben center
+        const lat = el.lat ?? el.center?.lat;
+        const lon = el.lon ?? el.center?.lon;
+        if (lat == null || lon == null) return;
+
+        const t = el.tags || {};
+        const rows = [
+          ['Naam', t.name || 'Naamloos'],
+          ['Beheerder', t.operator],
+          ['Ondergrond', t.surface],
+          ['Toegang', t.access],
+          ['Rolstoeltoegankelijk', t.wheelchair],
+          ['Leeftijd', t.min_age || t.max_age
+              ? `${t.min_age || '?'} – ${t.max_age || '?'} jaar` : null]
+        ].filter(r => r[1]);
+
+        const html = rows.map(r => `<b>${r[0]}:</b> ${r[1]}`).join('<br>') +
+          `<br><a href="https://www.openstreetmap.org/${el.type}/${el.id}" target="_blank" rel="noopener">Bekijk in OSM</a>`;
+
+        cluster.addLayer(L.marker([lat, lon]).bindPopup(html));
+      });
+
+      map.addLayer(cluster);
+      info._div.textContent = `${data.elements.length} speeltuinen in Flevoland`;
+      if (cluster.getLayers().length) map.fitBounds(cluster.getBounds().pad(0.05));
+    })
+    .catch(err => {
+      info._div.textContent = 'Laden mislukt, probeer het later opnieuw.';
+      console.error(err);
+    });
+</script>
+</body>
+</html>
